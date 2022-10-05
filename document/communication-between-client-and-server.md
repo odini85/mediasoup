@@ -1,4 +1,4 @@
-# 클라이언트와 server간의 통신
+# client와 server간 통신
 
 mediasoup은 client와 server간 통신을 위한 signal 프로토콜을 제공하지 않는다.
 
@@ -19,7 +19,7 @@ WebRTC를 통해 미디어를 주고 받기 위해 mediasoup-client [Device](htt
 
 > mediasoup-client 는 mediasoup에 적합한 [RTP](https://mediasoup.org/documentation/v3/mediasoup/rtp-parameters-and-capabilities/) 매개변수를 생성하기 때문에 client 측 애플리케이션 개발을 단순화 한다.
 
-### Signaling and Peers
+### Signaling, Peers
 
 애플리케이션은 WebSocket을 사용하여 인증된 각 WebSocket 연결을 "Peer"와 연결할 수 있다.
 
