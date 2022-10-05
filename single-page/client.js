@@ -28,8 +28,9 @@ export let joined;
 export let localCam;
 /** 공유용 로컬 스크린 */
 export let localScreen;
+/** 받기 transport */
 export let recvTransport;
-/** 트랜스포트 전송 */
+/** 보내기 transport */
 export let sendTransport;
 /** 카메라 프로듀서 - sendTransport.produce 를 통해 생성 */
 export let camVideoProducer;
@@ -41,6 +42,7 @@ export let screenAudioProducer;
 export let currentActiveSpeaker = {};
 /** 마지막 폴링으로 동기화된 피어 데이터 */
 export let lastPollSyncData = {};
+/** 컨슈머 목록 */
 export let consumers = [];
 /** 폴링 인터벌 아이디 */
 export let pollingInterval;
@@ -64,7 +66,7 @@ export async function main() {
   }
 
   window.addEventListener("unload", () => {
-    // unload 이벤트에 연결 끊김 여부를 서버에 알려준다.
+    // http 요청 - unload 이벤트에 연결 끊김 여부를 서버에 알려준다.
     sig("leave", {}, true);
   });
 }
@@ -85,7 +87,7 @@ export async function joinRoom() {
   $("#join-control").style.display = "none";
 
   try {
-    // 새로운 피어임을 알린다.
+    // http 요청 - 새로운 피어임을 알린다.
     const { routerRtpCapabilities } = await sig("join-as-new-peer");
     // mediasoup-client device가 로드되지 않은 경우(처음 연결)
     if (!device.loaded) {
@@ -106,6 +108,7 @@ export async function joinRoom() {
   // 1초 간격 폴링(인터벌)
   pollingInterval = setInterval(async () => {
     console.log("interval!");
+    // 폴링, 업데이트 로직
     let { error } = await pollAndUpdate();
     // 에러가 있다면 오류
     if (error) {
@@ -128,11 +131,14 @@ export async function sendCameraStreams() {
    * 방에 참여하고 카메라가 시작되었는지 확인한다.
    * 이미 호출된 함수는 아무것도 하지 않는다.
    */
+  // 방 입장
   await joinRoom();
+  // 카메라 시작
   await startCamera();
 
   // sendTransport가 없다면 sendTransport 생성
   if (!sendTransport) {
+    // transport 생성
     sendTransport = await createTransport("send");
   }
 
@@ -173,6 +179,7 @@ export async function sendCameraStreams() {
   }
 
   $("#stop-streams").style.display = "initial";
+  // 현재 카메라 정보 노출
   showCameraInfo();
 }
 
@@ -186,6 +193,7 @@ export async function startScreenshare() {
   // 방 참여 여부와 sendTransport가 있는지 확인한다.
   await joinRoom();
   if (!sendTransport) {
+    // transport 생성
     sendTransport = await createTransport("send");
   }
 
@@ -215,6 +223,7 @@ export async function startScreenshare() {
     log("screen share stopped");
     try {
       await screenVideoProducer.pause();
+      // http 요청
       let { error } = await sig("close-producer", {
         producerId: screenVideoProducer.id,
       });
@@ -224,6 +233,7 @@ export async function startScreenshare() {
         err(error);
       }
       if (screenAudioProducer) {
+        // http 요청
         let { error } = await sig("close-producer", {
           producerId: screenAudioProducer.id,
         });
@@ -266,7 +276,11 @@ export async function startCamera() {
   }
 }
 
-// 카메라가 여러개 있는 경우 - 보유한 디바이스 목록에서 다음 카메라 디바이스 비디오 전송으로 전환
+/**
+ * @title 카메라 전환
+ * @description 보유한 디바이스 목록에서 다음 카메라 디바이스 비디오 전송으로 전환
+ * @returns
+ */
 export async function cycleCamera() {
   if (!(camVideoProducer && camVideoProducer.track)) {
     warn("cannot cycle camera - no current camera track");
@@ -290,12 +304,10 @@ export async function cycleCamera() {
     idx += 1;
   }
 
-  // get a new video stream. might as well get a new audio stream too,
-  // just in case browsers want to group audio/video streams together
-  // from the same device when possible (though they don't seem to,
-  // currently)
   /**
-   *
+   * 새 비디오 스트림을 가져온다.
+   * 새로운 오디오 스트림도 얻을 수 있다.
+   * 브라우저가 동일한 장치에서 오디오/비디오 스트림을 함께 그룹화하기를 원하는 경우에 대한 처리(현재 그렇지 않음).
    */
   log("getting a video stream from new device", vidDevices[idx].label);
   localCam = await navigator.mediaDevices.getUserMedia({
@@ -303,14 +315,18 @@ export async function cycleCamera() {
     audio: true,
   });
 
-  // replace the tracks we are sending
+  // 우리가 보내는 tack을 교체한다
   await camVideoProducer.replaceTrack({ track: localCam.getVideoTracks()[0] });
   await camAudioProducer.replaceTrack({ track: localCam.getAudioTracks()[0] });
 
-  // update the user interface
+  // 현재 카메라 정보 노출
   showCameraInfo();
 }
 
+/**
+ * @title 스트림 종료
+ * @returns
+ */
 export async function stopStreams() {
   if (!(localCam || localScreen)) {
     return;
@@ -322,17 +338,19 @@ export async function stopStreams() {
   log("stop sending media streams");
   $("#stop-streams").style.display = "none";
 
+  // http 요청
   let { error } = await sig("close-transport", {
     transportId: sendTransport.id,
   });
   if (error) {
     err(error);
   }
-  // closing the sendTransport closes all associated producers. when
-  // the camVideoProducer and camAudioProducer are closed,
-  // mediasoup-client stops the local cam tracks, so we don't need to
-  // do anything except set all our local variables to null.
+
   try {
+    /**
+     * sendTransport를 닫으면 모든 관련 producer(camVideoProducer 및 camAudioProducer)가 닫힌다.
+     * mediasup-client는 local cam track을 중지하므로 모든 local 변수를 null로 설정하는 것 외에는 아무것도 할 필요가 없다.
+     */
     await sendTransport.close();
   } catch (e) {
     console.error(e);
@@ -345,14 +363,19 @@ export async function stopStreams() {
   localCam = null;
   localScreen = null;
 
-  // update relevant ui elements
+  // 관련 UI 갱신
   $("#send-camera").style.display = "initial";
   $("#share-screen").style.display = "initial";
   $("#local-screen-pause-ctrl").style.display = "none";
   $("#local-screen-audio-pause-ctrl").style.display = "none";
+  // 현재 카메라 정보 노출
   showCameraInfo();
 }
 
+/**
+ * @title 방에서 나가기
+ * @returns
+ */
 export async function leaveRoom() {
   if (!joined) {
     return;
@@ -361,18 +384,20 @@ export async function leaveRoom() {
   log("leave room");
   $("#leave-room").style.display = "none";
 
-  // stop polling
+  // 인터벌 pollAndUpdate 호출 처리 중지
   clearInterval(pollingInterval);
 
-  // close everything on the server-side (transports, producers, consumers)
+  // http 요청 - 서버 측(transport, producers, consumers)의 모든 것을 닫는다.
   let { error } = await sig("leave");
   if (error) {
     err(error);
   }
 
-  // closing the transports closes all producers and consumers. we
-  // don't need to do anything beyond closing the transports, except
-  // to set all our local variables to their initial states
+  /**
+   * transports를 닫는것은 것은 모든 producer 와 consumers를 다는것이이다.
+   * transports 를 닫는것 외에 추가 작업은 필요없다.
+   * 따라서 모든 지역 변수를 초기 상태로 설정한다.
+   */
   try {
     recvTransport && (await recvTransport.close());
     sendTransport && (await sendTransport.close());
@@ -391,7 +416,7 @@ export async function leaveRoom() {
   consumers = [];
   joined = false;
 
-  // hacktastically restore ui to initial state
+  // UI 최초 상태로 되돌린다.
   $("#join-control").style.display = "initial";
   $("#send-camera").style.display = "initial";
   $("#stop-streams").style.display = "none";
@@ -399,30 +424,42 @@ export async function leaveRoom() {
   $("#share-screen").style.display = "initial";
   $("#local-screen-pause-ctrl").style.display = "none";
   $("#local-screen-audio-pause-ctrl").style.display = "none";
+  // 현재 카메라 정보 노출
   showCameraInfo();
+  // CamVideo Producer Stats 디스플레이 업데이트
   updateCamVideoProducerStatsDisplay();
+  // ScreenVideo Producer Stats 디스플레이 업데이트
   updateScreenVideoProducerStatsDisplay();
+  // peer 정보 노출 갱신
   updatePeersDisplay();
 }
 
+/**
+ * @title track 구독
+ * @param {string} peerId
+ * @param {*} mediaTag
+ * @returns
+ */
 export async function subscribeToTrack(peerId, mediaTag) {
   log("subscribe to track", peerId, mediaTag);
 
-  // create a receive transport if we don't already have one
+  // receive transport 를 갖고 있지 않다면 receive transport를 생성한다.
   if (!recvTransport) {
     recvTransport = await createTransport("recv");
   }
 
-  // if we do already have a consumer, we shouldn't have called this
-  // method
+  // track을 위한 컨슈머 검색
   let consumer = findConsumerForTrack(peerId, mediaTag);
   if (consumer) {
+    // consumer 존재한다면, 호출되지 않아야 하므로 리턴처리
     err("already have consumer for track", peerId, mediaTag);
     return;
   }
 
-  // ask the server to create a server-side consumer object and send
-  // us back the info we need to create a client-side consumer
+  /**
+   * http 요청 - 서버에 서버 측 consumer 객체를 만들고 전송하도록 요청하고
+   * 클라이언트 측 consumer를 만드는 데 필요한 정보를 백업한다.
+   */
   let consumerParameters = await sig("recv-track", {
     mediaTag,
     mediaPeerId: peerId,
@@ -435,25 +472,34 @@ export async function subscribeToTrack(peerId, mediaTag) {
   });
   log("created new consumer", consumer.id);
 
-  // the server-side consumer will be started in paused state. wait
-  // until we're connected, then send a resume request to the server
-  // to get our first keyframe and start displaying video
+  /**
+   * 서버 측 consumer는 일시 중지된 상태에서 시작된다.
+   * 연결될 때까지 기다린 다음 첫 번째 키프레임을 가져오고 비디오 표시를 시작하기 위해 서버 resume 요청을 보낸다.
+   */
   while (recvTransport.connectionState !== "connected") {
     log("  transport connstate", recvTransport.connectionState);
     await sleep(100);
   }
-  // okay, we're ready. let's ask the peer to send us media
+  // 클라이언트 준비 완료, peer에 미디어를 보내달라고 요청한다.
   await resumeConsumer(consumer);
 
-  // keep track of all our consumers
+  // consumer 목록 추가
   consumers.push(consumer);
 
-  // ui
+  // 비디오 또는 오디오를 추가한다.
   await addVideoAudio(consumer);
+  // 피어 목록 갱신
   updatePeersDisplay();
 }
 
+/**
+ * @title track 구독 취소
+ * @param {string} peerId
+ * @param {string} mediaTag
+ * @returns
+ */
 export async function unsubscribeFromTrack(peerId, mediaTag) {
+  // track을 위한 컨슈머 검색
   let consumer = findConsumerForTrack(peerId, mediaTag);
   if (!consumer) {
     return;
@@ -465,14 +511,19 @@ export async function unsubscribeFromTrack(peerId, mediaTag) {
   } catch (e) {
     console.error(e);
   }
-  // force update of ui
+  // peer 정보 노출 갱신
   updatePeersDisplay();
 }
 
+/**
+ * @title consumer 멈춤
+ * @param {*} consumer
+ */
 export async function pauseConsumer(consumer) {
   if (consumer) {
     log("pause consumer", consumer.appData.peerId, consumer.appData.mediaTag);
     try {
+      // http 요청
       await sig("pause-consumer", { consumerId: consumer.id });
       await consumer.pause();
     } catch (e) {
@@ -481,10 +532,16 @@ export async function pauseConsumer(consumer) {
   }
 }
 
+/**
+ * @title consumer 재시작
+ * @description peer에 미디어를 보내달라고 요청한다.
+ * @param {*} consumer
+ */
 export async function resumeConsumer(consumer) {
   if (consumer) {
     log("resume consumer", consumer.appData.peerId, consumer.appData.mediaTag);
     try {
+      // http 요청
       await sig("resume-consumer", { consumerId: consumer.id });
       await consumer.resume();
     } catch (e) {
@@ -493,10 +550,15 @@ export async function resumeConsumer(consumer) {
   }
 }
 
+/**
+ * @title Producer 멈춤
+ * @param {*} producer
+ */
 export async function pauseProducer(producer) {
   if (producer) {
     log("pause producer", producer.appData.mediaTag);
     try {
+      // http 요청
       await sig("pause-producer", { producerId: producer.id });
       await producer.pause();
     } catch (e) {
@@ -505,10 +567,15 @@ export async function pauseProducer(producer) {
   }
 }
 
+/**
+ * @title Producer 재시작
+ * @param {*} producer
+ */
 export async function resumeProducer(producer) {
   if (producer) {
     log("resume producer", producer.appData.mediaTag);
     try {
+      // http 요청
       await sig("resume-producer", { producerId: producer.id });
       await producer.resume();
     } catch (e) {
@@ -517,33 +584,47 @@ export async function resumeProducer(producer) {
   }
 }
 
+/**
+ * @title 컨슈머 닫기
+ * @param {*} consumer
+ * @returns
+ */
 async function closeConsumer(consumer) {
   if (!consumer) {
     return;
   }
   log("closing consumer", consumer.appData.peerId, consumer.appData.mediaTag);
   try {
-    // tell the server we're closing this consumer. (the server-side
-    // consumer may have been closed already, but that's okay.)
+    /**
+     * 해당 consumer 를 닫는것을 서버에 알린다
+     * 서버 측 consumer는 이미 닫혔을 수 있지만 괜찮다.
+     */
     await sig("close-consumer", { consumerId: consumer.id });
     await consumer.close();
 
     consumers = consumers.filter((c) => c !== consumer);
+    // 비디오 또는 오디오 제거
     removeVideoAudio(consumer);
   } catch (e) {
     console.error(e);
   }
 }
 
-// utility function to create a transport and hook up signaling logic
-// appropriate to the transport's direction
-//
+/**
+ * @title transport 생성
+ * @description transport를 생성하고, 전송 방향에 맞는 signal 로직을 연결한다.
+ * @param {*} direction
+ * @returns
+ */
 async function createTransport(direction) {
   log(`create ${direction} transport`);
 
-  // ask the server to create a server-side transport object and send
-  // us back the info we need to create a client-side transport
+  /**
+   * 서버에 서버 측 transport 객체를 생성하도록 요청하고
+   * 클라이언트 측 transport를 생성하는 데 필요한 정보를 다시 보내야한다.
+   */
   let transport,
+    // http 요청
     { transportOptions } = await sig("create-transport", { direction });
   log("transport options", transportOptions);
 
@@ -555,11 +636,13 @@ async function createTransport(direction) {
     throw new Error(`bad transport 'direction': ${direction}`);
   }
 
-  // mediasoup-client will emit a connect event when media needs to
-  // start flowing for the first time. send dtlsParameters to the
-  // server, then call callback() on success or errback() on failure.
+  /**
+   * mediasoup-client는 미디어가 처음으로 흐르기 시작해야 연결 이벤트를 보낸다.
+   * dtlsParameters를 서버로 보낸 다음 성공하면 callback()을 호출하고 실패하면 errback()을 호출한다.
+   */
   transport.on("connect", async ({ dtlsParameters }, callback, errback) => {
     log("transport connect event", direction);
+    // http 요청
     let { error } = await sig("connect-transport", {
       transportId: transportOptions.id,
       dtlsParameters,
@@ -573,26 +656,28 @@ async function createTransport(direction) {
   });
 
   if (direction === "send") {
-    // sending transports will emit a produce event when a new track
-    // needs to be set up to start sending. the producer's appData is
-    // passed as a parameter
+    /**
+     * transport 전송은 전송을 시작하기 위해 새 track을 설정해야 할 때 생성 이벤트를 내보낸다.
+     * producer의 appData는 매개변수로 전달
+     */
     transport.on(
       "produce",
       async ({ kind, rtpParameters, appData }, callback, errback) => {
         log("transport produce event", appData.mediaTag);
-        // we may want to start out paused (if the checkboxes in the ui
-        // aren't checked, for each media type. not very clean code, here
-        // but, you know, this isn't a real application.)
+        /**
+         * UI의 체크박스가 선택되지 않은 경우 각 미디어 종류에 대해 일시 중지된 상태로 시작하고 싶을 수 있다.
+         */
         let paused = false;
         if (appData.mediaTag === "cam-video") {
           paused = getCamPausedState();
         } else if (appData.mediaTag === "cam-audio") {
           paused = getMicPausedState();
         }
-        // tell the server what it needs to know from us in order to set
-        // up a server-side producer object, and get back a
-        // producer.id. call callback() on success or errback() on
-        // failure.
+        /**
+         * 서버 측 producer 객체를 설정하기 위해 서버에게 우리의 정보를 전달하고 생산자 ID를 반환 받는다.
+         * 성공 시 callback() 또는 호출 실패 시 errback()  호출
+         */
+        // http 요청
         let { error, id } = await sig("send-track", {
           transportId: transportOptions.id,
           kind,
@@ -613,11 +698,16 @@ async function createTransport(direction) {
   // for this simple demo, any time a transport transitions to closed,
   // failed, or disconnected, leave the room and reset
   //
+  /**
+   * 현재 데모는 간단하게 구현되어 있기 때문에
+   * transport가 닫힘/실패/연결 끊김으로 전환될 때마다 방에서 나와 재설정 해야 한다.
+   */
   transport.on("connectionstatechange", async (state) => {
     log(`transport ${transport.id} connectionstatechange ${state}`);
-    // for this simple sample code, assume that transports being
-    // closed is an error (we never close these transports except when
-    // we leave the room)
+    /**
+     * 현재 샘플 코드에서는 closed 전송이 오류라고 가정한다.
+     * 방을 나갈 때를 제외하고는 전송을 닫지 않는다.
+     */
     if (state === "closed" || state === "failed" || state === "disconnected") {
       log("transport closed ... leaving the room and resetting");
       leaveRoom();
@@ -633,15 +723,20 @@ async function createTransport(direction) {
  * @returns
  */
 async function pollAndUpdate() {
+  // http 요청
   let { peers, activeSpeaker, error } = await sig("sync");
   if (error) {
     return { error };
   }
 
   currentActiveSpeaker = activeSpeaker;
+  // 활성화된 스피커 갱신
   updateActiveSpeaker();
+  // CamVideo Producer Stats 디스플레이 업데이트
   updateCamVideoProducerStatsDisplay();
+  // ScreenVideo Producer Stats 디스플레이 업데이트
   updateScreenVideoProducerStatsDisplay();
+  // consumer state 디스플레이 업데이트
   updateConsumersStatsDisplay();
 
   // 트랙 목록, 비디오/오디오 업데이트 여부 체크
@@ -683,6 +778,11 @@ async function pollAndUpdate() {
   return {};
 }
 
+/**
+ * @title peer 목록 정렬
+ * @param {*} peers
+ * @returns
+ */
 function sortPeers(peers) {
   return Object.entries(peers)
     .map(([id, info]) => ({
@@ -693,6 +793,12 @@ function sortPeers(peers) {
     .sort((a, b) => (a.joinTs > b.joinTs ? 1 : b.joinTs > a.joinTs ? -1 : 0));
 }
 
+/**
+ * @title track을 위한 컨슈머 검색
+ * @param {string} peerId
+ * @param {string} mediaTag
+ * @returns
+ */
 function findConsumerForTrack(peerId, mediaTag) {
   return consumers.find(
     (c) => c.appData.peerId === peerId && c.appData.mediaTag === mediaTag
@@ -704,65 +810,106 @@ function findConsumerForTrack(peerId, mediaTag) {
 //
 
 /**
- * @title 카메라 멈춤 여부
+ * @title 카메라 멈춤 상태 가져오기
  * @returns
  */
 export function getCamPausedState() {
   return !$("#local-cam-checkbox").checked;
 }
 
+/**
+ * @title 마이크가 멈춤 상태 가져오기
+ * @returns
+ */
 export function getMicPausedState() {
   return !$("#local-mic-checkbox").checked;
 }
 
+/**
+ * @title 화면 멈춤 상태 가져오기
+ * @returns
+ */
 export function getScreenPausedState() {
   return !$("#local-screen-checkbox").checked;
 }
 
+/**
+ * @title ScreenAudio 멈춤 상태 가져오기
+ * @returns
+ */
 export function getScreenAudioPausedState() {
   return !$("#local-screen-audio-checkbox").checked;
 }
 
+/**
+ * @title Cam 멈춤 토글
+ */
 export async function changeCamPaused() {
+  // 카메라 멈춤 상태라면
   if (getCamPausedState()) {
+    // Producer 멈춤
     pauseProducer(camVideoProducer);
     $("#local-cam-label").innerHTML = "camera (paused)";
   } else {
+    // Producer 재시작
     resumeProducer(camVideoProducer);
     $("#local-cam-label").innerHTML = "camera";
   }
 }
 
+/**
+ * @title 마이크 멈춤 토글
+ */
 export async function changeMicPaused() {
+  // 마이크가 멈춤 상태라면
   if (getMicPausedState()) {
+    // Producer 멈춤
     pauseProducer(camAudioProducer);
     $("#local-mic-label").innerHTML = "mic (paused)";
   } else {
+    // Producer 재시작
     resumeProducer(camAudioProducer);
     $("#local-mic-label").innerHTML = "mic";
   }
 }
 
+/**
+ * @title 화면 멈춤 토글
+ */
 export async function changeScreenPaused() {
+  // 화면 멈춤 상태라면
   if (getScreenPausedState()) {
+    // Producer 멈춤
     pauseProducer(screenVideoProducer);
     $("#local-screen-label").innerHTML = "screen (paused)";
   } else {
+    // Producer 재시작
     resumeProducer(screenVideoProducer);
     $("#local-screen-label").innerHTML = "screen";
   }
 }
 
+/**
+ * @title 화면 오디오 멈춤 토글
+ */
 export async function changeScreenAudioPaused() {
+  // ScreenAudio 멈춤 상태라면
   if (getScreenAudioPausedState()) {
+    // Producer 멈춤
     pauseProducer(screenAudioProducer);
     $("#local-screen-audio-label").innerHTML = "screen (paused)";
   } else {
+    // Producer 재시작
     resumeProducer(screenAudioProducer);
     $("#local-screen-audio-label").innerHTML = "screen";
   }
 }
 
+/**
+ * @title peer 정보 노출 갱신
+ * @param {*} peersInfo
+ * @param {*} sortedPeers
+ */
 export async function updatePeersDisplay(
   peersInfo = lastPollSyncData,
   sortedPeers = sortPeers(peersInfo)
@@ -819,19 +966,29 @@ export async function updatePeersDisplay(
   }
 }
 
+/**
+ * @title track 제어 엘리먼트 생성
+ * @param {string} peerName
+ * @param {string} mediaTag
+ * @param {*} mediaInfo
+ * @returns
+ */
 function makeTrackControlEl(peerName, mediaTag, mediaInfo) {
   let div = document.createElement("div"),
     peerId = peerName === "my" ? myPeerId : peerName,
+    // track을 위한 컨슈머 검색
     consumer = findConsumerForTrack(peerId, mediaTag);
   div.classList = `track-subscribe track-subscribe-${peerId}`;
 
   let sub = document.createElement("button");
   if (!consumer) {
     sub.innerHTML += "subscribe";
+    // track 구독
     sub.onclick = () => subscribeToTrack(peerId, mediaTag);
     div.appendChild(sub);
   } else {
     sub.innerHTML += "unsubscribe";
+    // track 구독 취소
     sub.onclick = () => unsubscribeFromTrack(peerId, mediaTag);
     div.appendChild(sub);
   }
@@ -862,10 +1019,13 @@ function makeTrackControlEl(peerName, mediaTag, mediaInfo) {
     checkbox.checked = !consumer.paused;
     checkbox.onchange = async () => {
       if (checkbox.checked) {
+        // consumer 재시작
         await resumeConsumer(consumer);
       } else {
+        // consumer 멈춤
         await pauseConsumer(consumer);
       }
+      // peer 정보 노출 갱신
       updatePeersDisplay();
     };
     label.id = `consumer-stats-${consumer.id}`;
@@ -894,14 +1054,20 @@ function makeTrackControlEl(peerName, mediaTag, mediaInfo) {
   return div;
 }
 
+/**
+ * @title 비디오 또는 오디오 추가
+ * @param {*} consumer
+ * @returns
+ */
 function addVideoAudio(consumer) {
   if (!(consumer && consumer.track)) {
     return;
   }
   let el = document.createElement(consumer.kind);
-  // set some attributes on our audio and video elements to make
-  // mobile Safari happy. note that for audio to play you need to be
-  // capturing from the mic/camera
+  /**
+   * 오디오와 비디오 엘리먼트를 만들기 위해서 일부 어트리뷰트를 설정한다.
+   * 오디오를 재생하려면 mic/camera에서 캡처해야 한다.
+   */
   if (consumer.kind === "video") {
     el.setAttribute("playsinline", true);
   } else {
@@ -911,9 +1077,11 @@ function addVideoAudio(consumer) {
   $(`#remote-${consumer.kind}`).appendChild(el);
   el.srcObject = new MediaStream([consumer.track.clone()]);
   el.consumer = consumer;
-  // let's "yield" and return before playing, rather than awaiting on
-  // play() succeeding. play() will not succeed on a producer-paused
-  // track until the producer unpauses.
+  /**
+   * play의 성공을 기다리기보다 play 하기 전에 yield 하고 리턴한다.
+   * play()는 producer 일시 중지를 해제할 때까지
+   * producer 일시 중지 트랙에서 성공하지 못한다.
+   */
   el.play()
     .then(() => {})
     .catch((e) => {
@@ -921,6 +1089,10 @@ function addVideoAudio(consumer) {
     });
 }
 
+/**
+ * @title 비디오 또는 오디오 제거
+ * @param {*} consumer
+ */
 function removeVideoAudio(consumer) {
   document.querySelectorAll(consumer.kind).forEach((v) => {
     if (v.consumer === consumer) {
@@ -929,6 +1101,10 @@ function removeVideoAudio(consumer) {
   });
 }
 
+/**
+ * @title 현재 카메라 정보 노출
+ * @returns
+ */
 async function showCameraInfo() {
   let deviceId = await getCurrentDeviceId(),
     infoEl = $("#camera-info");
@@ -976,12 +1152,17 @@ function updateActiveSpeaker() {
   }
 }
 
+/**
+ * @title CamVideo Producer Stats 디스플레이 업데이트
+ * @returns
+ */
 function updateCamVideoProducerStatsDisplay() {
   let tracksEl = $("#camera-producer-stats");
   tracksEl.innerHTML = "";
   if (!camVideoProducer || camVideoProducer.paused) {
     return;
   }
+  // Producer track 셀렉터 생성
   makeProducerTrackSelector({
     internalTag: "local-cam-tracks",
     container: tracksEl,
@@ -995,12 +1176,17 @@ function updateCamVideoProducerStatsDisplay() {
   });
 }
 
+/**
+ * @title  ScreenVideo Producer Stats 디스플레이 업데이트
+ * @returns
+ */
 function updateScreenVideoProducerStatsDisplay() {
   let tracksEl = $("#screen-producer-stats");
   tracksEl.innerHTML = "";
   if (!screenVideoProducer || screenVideoProducer.paused) {
     return;
   }
+  // Producer track 셀렉터 생성
   makeProducerTrackSelector({
     internalTag: "local-screen-tracks",
     container: tracksEl,
@@ -1014,6 +1200,9 @@ function updateScreenVideoProducerStatsDisplay() {
   });
 }
 
+/**
+ * @title consumer state 디스플레이 업데이트
+ */
 function updateConsumersStatsDisplay() {
   try {
     for (let consumer of consumers) {
@@ -1045,6 +1234,8 @@ function updateConsumersStatsDisplay() {
           tracksEl.innerHTML = "";
           let currentLayer =
             lastPollSyncData[myPeerId].consumerLayers[consumer.id].currentLayer;
+
+          // Producer track 셀렉터 생성
           makeProducerTrackSelector({
             internalTag: consumer.id,
             container: tracksEl,
@@ -1053,6 +1244,7 @@ function updateConsumersStatsDisplay() {
             currentLayer: currentLayer,
             layerSwitchFunc: (i) => {
               console.log("ask server to set layers");
+              // http 요청
               sig("consumer-set-layers", {
                 consumerId: consumer.id,
                 spatialLayer: i,
@@ -1067,6 +1259,11 @@ function updateConsumersStatsDisplay() {
   }
 }
 
+/**
+ * @title Producer track 셀렉터 생성
+ * @param {*} param0
+ * @returns
+ */
 function makeProducerTrackSelector({
   internalTag,
   container,
