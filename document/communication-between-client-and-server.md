@@ -36,7 +36,7 @@ client 측 애플리케이션은 server 측 mediasoup 라우터의 RTP 기능을
 
 mediasoup-client 는 미디어 송수신을 위해 별도의 WebRTC 전송이 필요하다.
 
-일반적으로 client 애플리케이션은 미디어를 보내거나 받기에 전 transport를 생성한다.
+일반적으로 client 애플리케이션은 미디어를 보내거나 받기 전 transport를 생성한다.
 
 #### 미디어 보내기
 
