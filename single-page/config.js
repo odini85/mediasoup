@@ -2,7 +2,7 @@ module.exports = {
   // http server ip, port, and peer timeout constant
   //
   httpIp: "0.0.0.0",
-  httpPort: 3000,
+  httpPort: 3777,
   httpPeerStale: 15000,
 
   // ssl certs. we'll start as http instead of https if we don't have
