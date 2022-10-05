@@ -28,7 +28,7 @@ WebRTC를 통해 미디어를 주고 받기 위해 mediasoup-client [Device](htt
 
 ### Device 로딩
 
-client 측 응용 프로그램은 server 측 미디어 수프 라우터의 RTP 기능을 제공하여 미디어 수프 장치를 로드한다.
+client 측 애플리케이션은 server 측 mediasoup 라우터의 RTP 기능을 제공하여 mediasoup device 로드한다.
 
 [device.load()](https://mediasoup.org/documentation/v3/mediasoup-client/api/#device-load) 참조
 
@@ -75,7 +75,7 @@ send transport가 생성되면 client 측 애플리케이션에서 여러 오디
 `Transports 생성과는 반대로 Media 소비자는 server에서 먼저 생성되어야 한다.`
 
 1. client 애플리케이션은 server에 [device.rtpCapabilities](https://mediasoup.org/documentation/v3/mediasoup-client/api/#device-rtpCapabilities) 신호를 보낸다.(미리 수행했을 수 있음).
-1. server 측 애플리케이션은 원격 장치가 특정 생산자(생산자 미디어 코덱을 지원하는지 여부)를 사용할 수 있는지 여부를 확인해야 한다.
+1. server 측 애플리케이션은 원격 device가 특정 생산자(생산자 미디어 코덱을 지원하는지 여부)를 사용할 수 있는지 여부를 확인해야 한다.
    - [router.canConsume()](https://mediasoup.org/documentation/v3/mediasoup/api/#router-canConsume) 메서드를 사용하여 수행할 수 있다.
 1. server 애플리케이션은 미디어 수신을 위해 생성된 WebRTC 전송 client에서 [transport.consume()](https://mediasoup.org/documentation/v3/mediasoup/api/#transport-consume)을 호출하여 server 측 [Consumer](https://mediasoup.org/documentation/v3/mediasoup-client/api/#Consumer)를 생성한다.
    - [transport.consume()](https://mediasoup.org/documentation/v3/mediasoup/api/#transport-consume) 문서의 내용처럼
