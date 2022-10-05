@@ -36,7 +36,9 @@ export let sendTransport;
 export let camVideoProducer;
 /** 오디오 프로듀서 - sendTransport.produce 를 통해 생성 */
 export let camAudioProducer;
+// screen video producer
 export let screenVideoProducer;
+// screen audio producer
 export let screenAudioProducer;
 /** 현재 활성화된 스피커 */
 export let currentActiveSpeaker = {};
@@ -203,14 +205,14 @@ export async function startScreenshare() {
     audio: true,
   });
 
-  // 비디오 producer 생성
+  // screen video producer 생성
   screenVideoProducer = await sendTransport.produce({
     track: localScreen.getVideoTracks()[0],
     encodings: screenshareEncodings(),
     appData: { mediaTag: "screen-video" },
   });
 
-  // 오디오 producer 생성
+  // screen audio producer 생성
   if (localScreen.getAudioTracks().length) {
     screenAudioProducer = await sendTransport.produce({
       track: localScreen.getAudioTracks()[0],
@@ -1120,6 +1122,10 @@ async function showCameraInfo() {
   `;
 }
 
+/**
+ * @title 혀재 디바이스 id 반환
+ * @returns
+ */
 export async function getCurrentDeviceId() {
   if (!camVideoProducer) {
     return null;
