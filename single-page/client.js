@@ -1129,7 +1129,6 @@ function camEncodings() {
   return CAM_VIDEO_SIMULCAST_ENCODINGS;
 }
 
-//
 /**
  * @title 스트림 대역폭 제한
  */
