@@ -57,7 +57,6 @@ export async function main() {
   console.log(`starting up ... my peerId is ${myPeerId}`);
   try {
     device = new mediasoup.Device();
-    console.warn("device ::", device);
   } catch (e) {
     if (e.name === "UnsupportedError") {
       console.error("browser not supported for video calls");
@@ -92,7 +91,6 @@ export async function joinRoom() {
     // http 요청 - 새로운 피어임을 알린다.
     const res = await sig("join-as-new-peer");
     const { routerRtpCapabilities } = res;
-    console.warn("join-as-new-peer res ::", res);
     // mediasoup-client device가 로드되지 않은 경우(처음 연결)
     if (!device.loaded) {
       // 디바이스를 초기화(로드) 한다.
@@ -730,7 +728,6 @@ async function pollAndUpdate() {
   const res = await sig("sync");
   let { peers, activeSpeaker, error } = res;
 
-  console.warn("sync res ::", res);
   if (error) {
     return { error };
   }
@@ -1352,6 +1349,13 @@ function screenshareEncodings() {
  * @returns
  */
 async function sig(endpoint, data, beacon) {
+  let isLogging = endpoint !== "sync" || !sig.isSync;
+  if (isLogging) {
+    console.warn(`sig : ${endpoint}`, data, `beacon : ${beacon}`);
+  }
+  if (endpoint === "sync" && !sig.isSync) {
+    sig.isSync = true;
+  }
   try {
     let headers = { "Content-Type": "application/json" },
       body = JSON.stringify({ ...data, peerId: myPeerId });
