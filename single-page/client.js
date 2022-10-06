@@ -1,4 +1,3 @@
-import * as config from "./config";
 import * as mediasoup from "mediasoup-client";
 import deepEqual from "deep-equal";
 import debugModule from "debug";
@@ -32,13 +31,13 @@ export let localScreen;
 export let recvTransport;
 /** 보내기 transport */
 export let sendTransport;
-/** 카메라 프로듀서 - sendTransport.produce 를 통해 생성 */
+/** 로컬 카메라 프로듀서 - sendTransport.produce 를 통해 생성 */
 export let camVideoProducer;
-/** 오디오 프로듀서 - sendTransport.produce 를 통해 생성 */
+/** 로컬 오디오 프로듀서 - sendTransport.produce 를 통해 생성 */
 export let camAudioProducer;
-// screen video producer
+// 로컬 화면공유(비디오) producer
 export let screenVideoProducer;
-// screen audio producer
+// 로컬 화면공유(오디오) producer
 export let screenAudioProducer;
 /** 현재 활성화된 스피커 */
 export let currentActiveSpeaker = {};
@@ -58,6 +57,7 @@ export async function main() {
   console.log(`starting up ... my peerId is ${myPeerId}`);
   try {
     device = new mediasoup.Device();
+    console.warn("device ::", device);
   } catch (e) {
     if (e.name === "UnsupportedError") {
       console.error("browser not supported for video calls");
@@ -90,7 +90,9 @@ export async function joinRoom() {
 
   try {
     // http 요청 - 새로운 피어임을 알린다.
-    const { routerRtpCapabilities } = await sig("join-as-new-peer");
+    const res = await sig("join-as-new-peer");
+    const { routerRtpCapabilities } = res;
+    console.warn("join-as-new-peer res ::", res);
     // mediasoup-client device가 로드되지 않은 경우(처음 연결)
     if (!device.loaded) {
       // 디바이스를 초기화(로드) 한다.
@@ -109,7 +111,6 @@ export async function joinRoom() {
 
   // 1초 간격 폴링(인터벌)
   pollingInterval = setInterval(async () => {
-    console.log("interval!");
     // 폴링, 업데이트 로직
     let { error } = await pollAndUpdate();
     // 에러가 있다면 오류
@@ -146,7 +147,7 @@ export async function sendCameraStreams() {
 
   /*
     비디오 전송을 시작한다.
-    전송 로직은 카메라 비디오 트랙에 대한 아웃바운드 rtp 스트림을 설정하기 위해 서버와 신호 대화를 시작합니다.
+    전송 로직은 카메라 비디오 트랙에 대한 아웃바운드 rtp 스트림을 설정하기 위해 서버와 신호 대화를 시작한다.
     createTransport() 함수에는 UI의 체크박스가 체크가 안된 경우 일시 중지된 상태에서 스트림을 시작하도록 서버에 요청하는 로직이 포함되어 있다.
     따라서 클라이언트 측 camVideoProducer 개체가 있다면 적절하게 일시 중지되도록 설정되어야 한다.
   */
@@ -351,7 +352,7 @@ export async function stopStreams() {
   try {
     /**
      * sendTransport를 닫으면 모든 관련 producer(camVideoProducer 및 camAudioProducer)가 닫힌다.
-     * mediasup-client는 local cam track을 중지하므로 모든 local 변수를 null로 설정하는 것 외에는 아무것도 할 필요가 없다.
+     * mediasoup-client는 local cam track을 중지하므로 모든 local 변수를 null로 설정하는 것 외에는 아무것도 할 필요가 없다.
      */
     await sendTransport.close();
   } catch (e) {
@@ -726,7 +727,10 @@ async function createTransport(direction) {
  */
 async function pollAndUpdate() {
   // http 요청
-  let { peers, activeSpeaker, error } = await sig("sync");
+  const res = await sig("sync");
+  let { peers, activeSpeaker, error } = res;
+
+  console.warn("sync res ::", res);
   if (error) {
     return { error };
   }
@@ -1123,7 +1127,7 @@ async function showCameraInfo() {
 }
 
 /**
- * @title 혀재 디바이스 id 반환
+ * @title 현재 디바이스 id 반환
  * @returns
  */
 export async function getCurrentDeviceId() {
