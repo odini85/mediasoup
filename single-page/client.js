@@ -471,6 +471,8 @@ export async function subscribeToTrack(peerId, mediaTag) {
     ...consumerParameters,
     appData: { peerId, mediaTag },
   });
+
+  console.error("consumer", consumer);
   log("created new consumer", consumer.id);
 
   /**
