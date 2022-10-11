@@ -209,11 +209,13 @@ const consumerParameters = await receiveTrack_파라미터_요청({
   mediaPeerId: peerId,
   rtpCapabilities: device.rtpCapabilities,
 });
-const consumer = await recvTransport.consume({
+const consumer = await receiveTransport.consume({
   ...consumerParameters,
   appData: { peerId, mediaTag },
 });
+```
 
+```ts
 // 비디오 또는 오디오 소비
 const el = document.createElement(consumer.kind);
 el.srcObject = new MediaStream([consumer.track.clone()]);
