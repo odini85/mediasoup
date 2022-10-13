@@ -19,96 +19,84 @@ expressApp.get("/receiver", (_, res) => res.render("receiver"));
 expressApp.get("/*", (_, res) => res.redirect("/"));
 expressApp.use(express.json({ type: "*/*" }));
 
-// one mediasoup worker and router
-//
+// 하나의 mediasoup worker, router, room 생성
+
 let httpsServer;
 let worker;
 let router;
 let audioLevelObserver;
 
-//
-// and one "room" ...
-//
 const roomState = {
-  // external
+  // 외부 용
   peers: {},
   activeSpeaker: { producerId: null, volume: null, peerId: null },
-  // internal
+  // 내부 용
   transports: {},
   producers: [],
   consumers: [],
 };
-//
-// for each peer that connects, we keep a table of peers and what
-// tracks are being sent and received. we also need to know the last
-// time we saw the peer, so that we can disconnect clients that have
-// network issues.
-//
-// for this simple demo, each client polls the server at 1hz, and we
-// just send this roomState.peers data structure as our answer to each
-// poll request.
-//
-// [peerId] : {
-//   joinTs: <ms timestamp>
-//   lastSeenTs: <ms timestamp>
-//   media: {
-//     [mediaTag] : {
-//       paused: <bool>
-//       encodings: []
-//     }
-//   },
-//   stats: {
-//     producers: {
-//       [producerId]: {
-//         ...(selected producer stats)
-//       }
-//     consumers: {
-//       [consumerId]: { ...(selected consumer stats) }
-//     }
-//   }
-//   consumerLayers: {
-//     [consumerId]:
-//         currentLayer,
-//         clientSelectedLayer,
-//       }
-//     }
-//   }
-// }
-//
-// we also send information about the active speaker, as tracked by
-// our audioLevelObserver.
-//
-// internally, we keep lists of transports, producers, and
-// consumers. whenever we create a transport, producer, or consumer,
-// we save the remote peerId in the object's `appData`. for producers
-// and consumers we also keep track of the client-side "media tag", to
-// correlate tracks.
-//
+
+/*
+  연결하는 각 피어에 대해 피어 테이블을 유지하고 트랙을 통해 무언가를 주고 받는다.
+  또한 네트워크 문제가 있는 클라이언트의 연결을 끊을 수 있도록 피어가 마지막 사용한 시간을 알아야 한다.
+
+  이 간단한 데모에서 각 클라이언트는 1초마다 서버에 폴링하고 서버는 roomState를 응답한다.
+  각 폴링 요청에 대한 응답으로 아래와 같은 peers 데이터 구조를 사용한다.
+
+  {
+    [peerId] : {
+      joinTs: <ms timestamp>
+      lastSeenTs: <ms timestamp>
+      media: {
+        [mediaTag] : {
+          paused: <bool>
+          encodings: []
+        }
+      },
+      stats: {
+        producers: {
+          [producerId]: {
+            ...(selected producer stats)
+          }
+        consumers: {
+          [consumerId]: { ...(selected consumer stats) }
+        }
+      }
+      consumerLayers: {
+        [consumerId]:
+            currentLayer,
+            clientSelectedLayer,
+          }
+        }
+      }
+    }
+  }
+
+  또한 audioLevelObserver에서 추적한 활성화된 발언자에 대한 정보도 보낸다.
+
+  서버에는 transport, producer 및 consumer 목록을 관리한다.
+
+  transport, producer 또는 consumer를 만들 때마다 remote peerId를 개체의 'appData'에 저장한다.
+  producer와 consumer를 위해 서버는 클라이언트에 "media tag"를 추적하여 track을 서로 연관시킨다.
+
+*/
 
 //
-// our http server needs to send 'index.html' and 'client-bundle.js'.
-// might as well just send everything in this directory ...
-//
-
-expressApp.use(express.static(__dirname));
-
-//
-// main() -- our execution entry point
+// main() -- 실행 진입 점
 //
 
 async function main() {
-  // start mediasoup
+  // mediasoup 시작
   console.log("starting mediasoup");
-  ({ worker, router, audioLevelObserver } = await startMediasoup());
+  const res = await startMediasoup();
 
-  // start https server, falling back to http if https fails
+  worker = res.worker;
+  router = res.router;
+  audioLevelObserver = res.audioLevelObserver;
+
+  // https server 서버 시작, 실패시 http 서버로 대체
   console.log("starting express");
   try {
-    // const tls = {
-    //   cert: fs.readFileSync(config.sslCrt),
-    //   key: fs.readFileSync(config.sslKey),
-    // };
-
     const pem = createCertificate([{ name: "commonName", value: "localhost" }]);
     const tlsFromPem = {
       cert: Buffer.from(pem.cert),
@@ -120,9 +108,8 @@ async function main() {
     httpsServer.on("error", (e) => {
       console.error("https server error,", e.message);
     });
-    console.log(">>>>> 111");
+
     await new Promise((resolve) => {
-      console.log(">>>>> 222");
       httpsServer.listen(config.httpPort, config.httpIp, () => {
         console.log(
           `server is running and listening on ` +
@@ -143,8 +130,8 @@ async function main() {
     });
   }
 
-  // periodically clean up peers that disconnected without sending us
-  // a final "beacon"
+  // 서버에 종료 요청을 보내지 않고 끊긴 peer 정리를 주기적으로 정리하기 위함.
+  // 마지막 요청은 beacon활용
   setInterval(() => {
     let now = Date.now();
     Object.entries(roomState.peers).forEach(([id, p]) => {
@@ -155,14 +142,14 @@ async function main() {
     });
   }, 1000);
 
-  // periodically update video stats we're sending to peers
+  // peer 들에게보내는 비디오 통계를 주기적으로 업데이트
   setInterval(updatePeerStats, 3000);
 }
 
 main();
 
 //
-// start mediasoup with a single worker and router
+// 단일 worker, router로 mediasoup 시작
 //
 
 async function startMediasoup() {
@@ -181,8 +168,7 @@ async function startMediasoup() {
   const mediaCodecs = config.mediasoup.router.mediaCodecs;
   const router = await worker.createRouter({ mediaCodecs });
 
-  // audioLevelObserver for signaling active speaker
-  //
+  // 활성화 된 스피커 신호를 위한 audioLevelObserver
   const audioLevelObserver = await router.createAudioLevelObserver({
     interval: 800,
   });
@@ -204,25 +190,20 @@ async function startMediasoup() {
 }
 
 //
-// -- our minimal signaling is just http polling --
+// -- signaling은 http polling방식 사용 --
 //
 
-// --> /signaling/sync
-//
-// client polling endpoint. send back our 'peers' data structure and
-// 'activeSpeaker' info
-//
+// 'peers' 데이터 구조와 'activeSpeaker' 정보를 다시 전달한다
 expressApp.post("/signaling/sync", async (req, res) => {
   let { peerId } = req.body;
   try {
-    // make sure this peer is connected. if we've disconnected the
-    // peer because of a network outage we want the peer to know that
-    // happened, when/if it returns
+    // 요청 받은 peer가 연결되어 있는지 확인한다.
+    // 네트워크 중단으로 인해 peer의 연결이 끊은 경우 peer가 반환할 때 발생했음을 알린다.
     if (!roomState.peers[peerId]) {
       throw new Error("not connected");
     }
 
-    // update our most-recently-seem timestamp -- we're not stale!
+    // 가장 최근 보낸 timestamp를 갱신한다.(오래된 요청 확인 용)
     roomState.peers[peerId].lastSeenTs = Date.now();
 
     res.send({
@@ -235,12 +216,8 @@ expressApp.post("/signaling/sync", async (req, res) => {
   }
 });
 
-// --> /signaling/join-as-new-peer
-//
-// adds the peer to the roomState data structure and creates a
-// transport that the peer will use for receiving media. returns
-// router rtpCapabilities for mediasoup-client device initialization
-//
+// roomState 데이터 구조에 peer를 추가하고 peer가 미디어를 수신하는 데 사용할 transport를 만든다.
+// mediasoup-client device 초기화를 위한 라우터 rtpCapabilities를 반환한다.
 expressApp.post("/signaling/join-as-new-peer", async (req, res) => {
   try {
     let { peerId } = req.body,
@@ -276,13 +253,12 @@ async function closeTransport(transport) {
   try {
     log("closing transport", transport.id, transport.appData);
 
-    // our producer and consumer event handlers will take care of
-    // calling closeProducer() and closeConsumer() on all the producers
-    // and consumers associated with this transport
+    // producer, consumer 이벤트 핸들러는
+    // 이 transport와 관련된 모든 producers, consumer에 대해
+    // closeProducer(), closeConsumer() 호출을 처리한다.
     await transport.close();
 
-    // so all we need to do, after we call transport.close(), is update
-    // our roomState data structure
+    // 따라서 transport.close() 호출 후 roomState 데이터 구조를 업데이트한다.
     delete roomState.transports[transport.id];
   } catch (e) {
     err(e);
@@ -294,12 +270,12 @@ async function closeProducer(producer) {
   try {
     await producer.close();
 
-    // remove this producer from our roomState.producers list
+    // roomState.producers 목록에서 전달받은 producer를 제거한다.
     roomState.producers = roomState.producers.filter(
       (p) => p.id !== producer.id
     );
 
-    // remove this track's info from our roomState...mediaTag bookkeeping
+    // roomState...mediaTag 에서 해당되는 track 정보를 제거한다.
     if (roomState.peers[producer.appData.peerId]) {
       delete roomState.peers[producer.appData.peerId].media[
         producer.appData.mediaTag
@@ -314,20 +290,17 @@ async function closeConsumer(consumer) {
   log("closing consumer", consumer.id, consumer.appData);
   await consumer.close();
 
-  // remove this consumer from our roomState.consumers list
+  // roomState.consumers 목록에서 전달받은 consumer를 제거한다.
   roomState.consumers = roomState.consumers.filter((c) => c.id !== consumer.id);
 
-  // remove layer info from from our roomState...consumerLayers bookkeeping
+  // roomState...consumerLayers 에서 레이어 정보 제거
   if (roomState.peers[consumer.appData.peerId]) {
     delete roomState.peers[consumer.appData.peerId].consumerLayers[consumer.id];
   }
 }
 
-// --> /signaling/create-transport
-//
-// create a mediasoup transport object and send back info needed
-// to create a transport object on the client side
-//
+// mediasoup transport 객체를 만들고
+// 클라이언트에서 transport 객체를 만드는 데 필요한 정보를 반환한다.
 expressApp.post("/signaling/create-transport", async (req, res) => {
   try {
     let { peerId, direction } = req.body;
@@ -362,11 +335,7 @@ async function createWebRtcTransport({ peerId, direction }) {
   return transport;
 }
 
-// --> /signaling/connect-transport
-//
-// called from inside a client's `transport.on('connect')` event
-// handler.
-//
+// 클라이언트의 `transport.on('connect')` 이벤트 핸들러 내부에서 호출된다.
 expressApp.post("/signaling/connect-transport", async (req, res) => {
   try {
     let { peerId, transportId, dtlsParameters } = req.body,
@@ -388,10 +357,7 @@ expressApp.post("/signaling/connect-transport", async (req, res) => {
   }
 });
 
-// --> /signaling/send-track
-//
-// called from inside a client's `transport.on('produce')` event handler.
-//
+// 클라이언트의 `transport.on('produce')` 이벤트 핸들러 내부에서 호출된다.
 expressApp.post("/signaling/send-track", async (req, res) => {
   try {
     let {
@@ -417,15 +383,16 @@ expressApp.post("/signaling/send-track", async (req, res) => {
       appData: { ...appData, peerId, transportId },
     });
 
-    // if our associated transport closes, close ourself, too
+    // 연결된 transport 가 닫히면 서버에서도 transport를 닫는다.
     producer.on("transportclose", () => {
       log("producer's transport closed", producer.id);
       closeProducer(producer);
     });
 
-    // monitor audio level of this producer. we call addProducer() here,
-    // but we don't ever need to call removeProducer() because the core
-    // AudioLevelObserver code automatically removes closed producers
+    // producer의 오디오 레벨을 모니터링한다
+    // audioLevelObserver.addProducer()를 실행했지만
+    // AudioLevelObserver 가 닫힌 producers를 자동으로 제거한다.
+    // 따라서 removeProducer()를 호출할 필요 없다
     if (producer.kind === "audio") {
       audioLevelObserver.addProducer({ producerId: producer.id });
     }
@@ -441,22 +408,20 @@ expressApp.post("/signaling/send-track", async (req, res) => {
 });
 
 // --> /signaling/recv-track
-//
-// create a mediasoup consumer object, hook it up to a producer here
-// on the server side, and send back info needed to create a consumer
-// object on the client side. always start consumers paused. client
-// will request media to resume when the connection completes
-//
+// mediasoup consumer 객체를 만들고 서버의 producer에 연결하고
+// consumer를 만드는 데 필요한 정보를 다시 보낸다.
+// 클라이언트 측의 객체는 항상 consumer를 일시 중지로 시작합니다.
+// 클라이언트는 연결이 완료되면 미디어 재개를 요청한다.
 expressApp.post("/signaling/recv-track", async (req, res) => {
   try {
-    let { peerId, mediaPeerId, mediaTag, rtpCapabilities } = req.body;
+    const { peerId, mediaPeerId, mediaTag, rtpCapabilities } = req.body;
 
-    let producer = roomState.producers.find(
+    const producer = roomState.producers.find(
       (p) => p.appData.mediaTag === mediaTag && p.appData.peerId === mediaPeerId
     );
 
     if (!producer) {
-      let msg =
+      const msg =
         "server-side producer for " + `${mediaPeerId}:${mediaTag} not found`;
       err("recv-track: " + msg);
       res.send({ error: msg });
@@ -464,33 +429,32 @@ expressApp.post("/signaling/recv-track", async (req, res) => {
     }
 
     if (!router.canConsume({ producerId: producer.id, rtpCapabilities })) {
-      let msg = `client cannot consume ${mediaPeerId}:${mediaTag}`;
+      const msg = `client cannot consume ${mediaPeerId}:${mediaTag}`;
       err(`recv-track: ${peerId} ${msg}`);
       res.send({ error: msg });
       return;
     }
 
-    let transport = Object.values(roomState.transports).find(
+    const transport = Object.values(roomState.transports).find(
       (t) => t.appData.peerId === peerId && t.appData.clientDirection === "recv"
     );
 
     if (!transport) {
-      let msg = `server-side recv transport for ${peerId} not found`;
+      const msg = `server-side recv transport for ${peerId} not found`;
       err("recv-track: " + msg);
       res.send({ error: msg });
       return;
     }
 
-    let consumer = await transport.consume({
+    const consumer = await transport.consume({
       producerId: producer.id,
       rtpCapabilities,
-      paused: true, // see note above about always starting paused
+      paused: true, // 항상 일시 중지 시작에 대한 위의 참고 사항을 참조
       appData: { peerId, mediaPeerId, mediaTag },
     });
 
-    // need both 'transportclose' and 'producerclose' event handlers,
-    // to make sure we close and clean up consumers in all
-    // circumstances
+    // 모든 상황에서 consumer를 닫고 정리하려면
+    // 'transportclose' 및 'producerclose' 이벤트 핸들러에서 처리한다.
     consumer.on("transportclose", () => {
       log(`consumer's transport closed`, consumer.id);
       closeConsumer(consumer);
@@ -500,16 +464,15 @@ expressApp.post("/signaling/recv-track", async (req, res) => {
       closeConsumer(consumer);
     });
 
-    // stick this consumer in our list of consumers to keep track of,
-    // and create a data structure to track the client-relevant state
-    // of this consumer
+    // consumer를 consumers에 추가하여 추적하고
+    // 이 consumer의 클라이언트 관련 상태를 추적하는 데이터 구조를 만든다.
     roomState.consumers.push(consumer);
     roomState.peers[peerId].consumerLayers[consumer.id] = {
       currentLayer: null,
       clientSelectedLayer: null,
     };
 
-    // update above data structure when layer changes.
+    // 레이어가 변경되면 위의 데이터 구조를 업데이트한다.
     consumer.on("layerschange", (layers) => {
       log(`consumer layerschange ${mediaPeerId}->${peerId}`, mediaTag, layers);
       if (
@@ -535,10 +498,7 @@ expressApp.post("/signaling/recv-track", async (req, res) => {
   }
 });
 
-// --> /signaling/resume-consumer
-//
-// called to resume receiving a track for a specific client
-//
+// 특정 클라이언트에 대한 track 수신을 재개하기 위해 호출된다.
 expressApp.post("/signaling/resume-consumer", async (req, res) => {
   try {
     let { peerId, consumerId } = req.body,
