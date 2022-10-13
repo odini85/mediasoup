@@ -1,7 +1,6 @@
 import express from "express";
 import * as mediasoup from "mediasoup";
 import https from "https";
-import SocketIO from "socket.io";
 import debugModule from "debug";
 import config from "./config";
 import createCertificate from "./createCertificate";
@@ -456,10 +455,12 @@ expressApp.post("/signaling/recv-track", async (req, res) => {
     // 모든 상황에서 consumer를 닫고 정리하려면
     // 'transportclose' 및 'producerclose' 이벤트 핸들러에서 처리한다.
     consumer.on("transportclose", () => {
+      console.log(">>>>>>>>> transportclose");
       log(`consumer's transport closed`, consumer.id);
       closeConsumer(consumer);
     });
     consumer.on("producerclose", () => {
+      console.log(">>>>>>>>> producerclose");
       log(`consumer's producer closed`, consumer.id);
       closeConsumer(consumer);
     });
@@ -471,18 +472,6 @@ expressApp.post("/signaling/recv-track", async (req, res) => {
       currentLayer: null,
       clientSelectedLayer: null,
     };
-
-    // 레이어가 변경되면 위의 데이터 구조를 업데이트한다.
-    consumer.on("layerschange", (layers) => {
-      log(`consumer layerschange ${mediaPeerId}->${peerId}`, mediaTag, layers);
-      if (
-        roomState.peers[peerId] &&
-        roomState.peers[peerId].consumerLayers[consumer.id]
-      ) {
-        roomState.peers[peerId].consumerLayers[consumer.id].currentLayer =
-          layers && layers.spatialLayer;
-      }
-    });
 
     res.send({
       producerId: producer.id,

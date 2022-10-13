@@ -97,7 +97,10 @@ class Client {
         .forEach((peerId) => {
           const buttonEl = document.createElement("button");
           buttonEl.textContent = `${peerId} : subscribe`;
-          const mediaTag = Object.entries(peers[peerId].media)?.[0][0];
+          const mediaTag = Object.entries(peers[peerId].media)?.[0]?.[0];
+          if (!mediaTag) {
+            return;
+          }
           buttonEl.onclick = () => {
             this.subscribeToTrack(peerId, mediaTag);
           };
@@ -180,6 +183,7 @@ class Client {
     /**
      * mediasoup-client는 미디어가 처음으로 흐르기 시작해야 연결 이벤트를 보낸다.
      * dtlsParameters를 서버로 보낸 다음 성공하면 successCallback()을 호출하고 실패하면 errorCallback()을 호출한다.
+     * 여기에서 구독하는 이벤트 들은 transport.produce()가 호출되어야 구독된다
      */
     transport.on(
       "connect",
