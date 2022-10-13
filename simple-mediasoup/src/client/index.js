@@ -251,6 +251,9 @@ class Client {
    * @title receiver 페이지에서 트랙 노출
    */
   async showTracks() {
+    // 틱 마다 서버에 저장된 peer 목록으로 로컬 데이터를 동기화 하고
+    // receiver 페이지는 동기화된 peer 목록을 기반으로 UI를 갱신한다.
+    // sender 페이지는 peer 목록을 노출하지 않기 때문에 flag 값으로 제어한다.
     this.state.isReceiver = true;
     await this.joinRoom();
   }
