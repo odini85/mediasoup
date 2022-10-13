@@ -10,6 +10,7 @@ class Client {
       localCam: null,
       joined: false,
       sendTransport: null,
+      recvTransport: null,
       camVideoProducer: null,
       pollingInterval: null,
       peers: {},
@@ -65,9 +66,9 @@ class Client {
       }
     }, 1000);
   }
+
   /**
    * @title 폴링, 업데이트 로직
-   * @description 활성화된 스피커 갱신, 프로듀서 (비디오, 화면) 통계 표시 갱신, 컨슈머 통계 표시 갱신
    * @returns
    */
   async pollAndUpdate() {
@@ -82,19 +83,26 @@ class Client {
     });
     const { peers, error } = res;
 
+    // peer 동기화
     this.state.peers = peers;
 
+    // 수신 페이지에서만 수신 버튼 노출
     if (this.state.isReceiver) {
-      document.querySelector("#tracks").innerHTML = Object.keys(peers)
+      const trackContainerEl = document.querySelector("#tracks");
+      trackContainerEl.innerHTML = "";
+      Object.keys(peers)
         .filter((key) => {
           return key !== myPeerId;
         })
-        .map((key) => {
-          return `<button data-peer-id="${key}" data-media-tag="${
-            Object.entries(peers[key].media)[0]?.[0]
-          }">subscribe</button>`;
-        })
-        .join("");
+        .forEach((peerId) => {
+          const buttonEl = document.createElement("button");
+          buttonEl.textContent = `${peerId} : subscribe`;
+          const mediaTag = Object.entries(peers[peerId].media)?.[0][0];
+          buttonEl.onclick = () => {
+            this.subscribeToTrack(peerId, mediaTag);
+          };
+          trackContainerEl.append(buttonEl);
+        });
     }
 
     if (error) {
@@ -103,29 +111,19 @@ class Client {
 
     return {};
   }
+
   /**
    * @title 카메라 스트림 전송
    */
   async sendCameraStreams() {
-    /**
-     * 방에 참여하고 카메라가 시작되었는지 확인한다.
-     * 이미 호출된 함수는 아무것도 하지 않는다.
-     */
-    // 방 입장
     await this.joinRoom();
-    // 카메라 시작
     await this.startCamera();
 
     if (!this.state.sendTransport) {
       this.state.sendTransport = await this.createTransport("send");
     }
 
-    /*
-    비디오 전송을 시작한다.
-    전송 로직은 카메라 비디오 트랙에 대한 아웃바운드 rtp 스트림을 설정하기 위해 서버와 신호 대화를 시작한다.
-    createTransport() 함수에는 UI의 체크박스가 체크가 안된 경우 일시 중지된 상태에서 스트림을 시작하도록 서버에 요청하는 로직이 포함되어 있다.
-    따라서 클라이언트 측 camVideoProducer 개체가 있다면 적절하게 일시 중지되도록 설정되어야 한다.
-  */
+    // 비디오 전송을 시작
     this.state.camVideoProducer = await this.state.sendTransport.produce({
       track: this.state.localCam.getVideoTracks()[0],
       encodings: CAM_VIDEO_SIMULCAST_ENCODINGS,
@@ -181,27 +179,30 @@ class Client {
 
     /**
      * mediasoup-client는 미디어가 처음으로 흐르기 시작해야 연결 이벤트를 보낸다.
-     * dtlsParameters를 서버로 보낸 다음 성공하면 callback()을 호출하고 실패하면 errback()을 호출한다.
+     * dtlsParameters를 서버로 보낸 다음 성공하면 successCallback()을 호출하고 실패하면 errorCallback()을 호출한다.
      */
-    transport.on("connect", async ({ dtlsParameters }, callback, errback) => {
-      log("transport connect event", direction);
-      // http 요청
-      const { error } = await request({
-        endpoint: "connect-transport",
-        method: "post",
-        payload: {
-          peerId: myPeerId,
-          transportId: transportOptions.id,
-          dtlsParameters,
-        },
-      });
-      if (error) {
-        err("error connecting transport", direction, error);
-        errback();
-        return;
+    transport.on(
+      "connect",
+      async ({ dtlsParameters }, successCallback, errorCallback) => {
+        log("transport connect event", direction);
+        // http 요청
+        const { error } = await request({
+          endpoint: "connect-transport",
+          method: "post",
+          payload: {
+            peerId: myPeerId,
+            transportId: transportOptions.id,
+            dtlsParameters,
+          },
+        });
+        if (error) {
+          err("error connecting transport", direction, error);
+          errorCallback();
+          return;
+        }
+        successCallback();
       }
-      callback();
-    });
+    );
 
     if (direction === "send") {
       /**
@@ -210,11 +211,15 @@ class Client {
        */
       transport.on(
         "produce",
-        async ({ kind, rtpParameters, appData }, callback, errback) => {
+        async (
+          { kind, rtpParameters, appData },
+          successCallback,
+          errorCallback
+        ) => {
           log("transport produce event", appData.mediaTag);
           /**
            * 서버 측 producer 객체를 설정하기 위해 서버에게 우리의 정보를 전달하고 생산자 ID를 반환 받는다.
-           * 성공 시 callback() 또는 호출 실패 시 errback()  호출
+           * 성공 시 successCallback() 또는 호출 실패 시 errorCallback()  호출
            */
           // http 요청
           const { error, id } = await request({
@@ -231,10 +236,10 @@ class Client {
           });
           if (error) {
             err("error setting up server-side producer", error);
-            errback();
+            errorCallback();
             return;
           }
-          callback({ id });
+          successCallback({ id });
         }
       );
     }
@@ -242,13 +247,12 @@ class Client {
     return transport;
   }
 
+  /**
+   * @title receiver 페이지에서 트랙 노출
+   */
   async showTracks() {
     this.state.isReceiver = true;
     await this.joinRoom();
-    document.querySelector("#tracks").addEventListener("click", (e) => {
-      const { peerId, mediaTag } = e.target.dataset;
-      this.subscribeToTrack(peerId, mediaTag);
-    });
   }
 
   /**
